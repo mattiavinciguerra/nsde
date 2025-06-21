@@ -8,7 +8,7 @@
 
 import pickle
 
-with open("../Dataset/fixs.pkl", "rb") as f:
+with open("../dataset/fixs.pkl", "rb") as f:
     fixs = pickle.load(f)
 
 print(len(fixs), len(fixs[0]), len(fixs[0][0]), len(fixs[0][0][0]))
