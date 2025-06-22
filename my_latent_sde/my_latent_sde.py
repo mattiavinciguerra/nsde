@@ -246,7 +246,7 @@ for i in subject_bar:
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5, verbose=True)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5)
     early_stopping = EarlyStopping(patience=20)
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size)
@@ -313,7 +313,7 @@ for i in subject_bar:
             print(f"Early stopping triggered at epoch {epoch+1}")
             break
 
-        epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss})
+        epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss, "Learning Rate": scheduler.get_last_lr()})
 
         # Logging
         #if epoch % log_every == 0:
