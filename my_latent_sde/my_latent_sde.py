@@ -11,7 +11,7 @@ import pickle
 with open("../dataset/fixs.pkl", "rb") as f:
     fixs = pickle.load(f)
 
-print(len(fixs), len(fixs[0]), len(fixs[0][0]), len(fixs[0][0][0]))
+#print(len(fixs), len(fixs[0]), len(fixs[0][0]), len(fixs[0][0][0]))
 # n_sbj x n_img x n_fix x n_coord x 2
 
 
@@ -184,9 +184,9 @@ def create_dataloaders(sbj_fixs, batch_size):
 # In[7]:
 
 
-latent_size = 8 # Dimensionalità dello spazio latente
+latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
-hidden_size = 128 # Dimensione dello stato nascosto
+hidden_size = 256 # Dimensione dello stato nascosto
 batch_size = 256 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
