@@ -269,7 +269,7 @@ for i in subject_bar:
         sde.eval() # Set the model to evaluation mode
         epoch_val_loss = 0.0
         with torch.no_grad():
-            val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=3)
+            val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
             for batch, mask in val_bar:
                 batch = batch.to(device)
                 mask = mask.to(device)
