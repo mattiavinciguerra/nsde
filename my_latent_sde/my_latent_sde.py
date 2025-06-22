@@ -189,7 +189,8 @@ input_size = 2 # Coppie di coordinate
 hidden_size = 128 # Dimensione dello stato nascosto
 batch_size = 16 # Dimensione del batch
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cpu') # test
 print("Using device:", device)
 
 num_epochs = 200
