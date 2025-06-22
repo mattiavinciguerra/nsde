@@ -139,6 +139,25 @@ class LatentSDE(torchsde.SDEIto):
 
         return recon_x
 
+class EarlyStopping:
+    def __init__(self, patience=20, delta=0):
+        self.patience = patience
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.delta = delta
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+
 
 # # DataLoader
 
@@ -226,7 +245,9 @@ for i in subject_bar:
     sbj_fixs = fixs[i]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
-    optimizer = optim.Adam(list(sde.parameters()), lr=lr)
+    optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5, verbose=True)
+    early_stopping = EarlyStopping(patience=20)
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size)
 
@@ -284,6 +305,13 @@ for i in subject_bar:
         epoch_val_loss /= len(val_loader)
         val_losses.append(epoch_val_loss)
         sde.train()
+
+        scheduler.step(epoch_val_loss)
+        early_stopping(epoch_val_loss)
+
+        if early_stopping.early_stop:
+            print(f"Early stopping triggered at epoch {epoch+1}")
+            break
 
         epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss})
 
