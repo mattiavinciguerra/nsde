@@ -59,8 +59,9 @@ class Encoder(nn.Module):
 
 
 class LatentSDE(torchsde.SDEIto):
-    def __init__(self, input_size, hidden_size, latent_size):
+    def __init__(self, input_size, hidden_size, latent_size, device):
         super().__init__(noise_type="diagonal")
+        self.device = device
 
         self.encoder = Encoder(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size)
 
@@ -116,7 +117,7 @@ class LatentSDE(torchsde.SDEIto):
         Returns:
             torch.Tensor: Sequenza generata di coordinate, shape [length, 2].
         """
-        ts = torch.linspace(0, 1, length, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        ts = torch.linspace(0, 1, length, device=self.device)  # [length] - Time steps for the SDE
         zs = torchsde.sdeint(self, z0, ts)  # [length, 1, latent_size]
         decoded = self.decoder(zs)  # [length, 1, 2]
         return decoded.squeeze(1)  # [length, 2]
@@ -126,7 +127,7 @@ class LatentSDE(torchsde.SDEIto):
         batch: [B, T, 2] - Batches of fixations (Batch size, Sequence length, 2 coordinates)
         lengths: [B] - Lengths of each fixation in the batch
         """
-        ts = torch.linspace(0, 1, batch.size(1), device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')) # [T] - Time steps for the SDE
+        ts = torch.linspace(0, 1, batch.size(1), device=self.device) # [T] - Time steps for the SDE
 
         lengths = mask.sum(dim=1).long() # Fixations lengths
         latent_states = self.encoder(batch, lengths) # [B, latent_size] - z0
@@ -189,6 +190,7 @@ hidden_size = 128 # Dimensione dello stato nascosto
 batch_size = 16 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print("Using device:", device)
 
 num_epochs = 200
 log_every = 10
@@ -223,7 +225,7 @@ for i in subject_bar:
     #print("Training subject " + str(i) + "...")
     sbj_fixs = fixs[i]
 
-    sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size).to(device)
+    sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr)
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size)
@@ -311,9 +313,9 @@ for i in subject_bar:
 # In[ ]:
 
 
-sdes = [LatentSDE(input_size, hidden_size, latent_size), LatentSDE(input_size, hidden_size, latent_size), LatentSDE(input_size, hidden_size, latent_size),
-        LatentSDE(input_size, hidden_size, latent_size), LatentSDE(input_size, hidden_size, latent_size), LatentSDE(input_size, hidden_size, latent_size),
-        LatentSDE(input_size, hidden_size, latent_size), LatentSDE(input_size, hidden_size, latent_size)]
+sdes = [LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device),
+        LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device),
+        LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device)]
 
 for i in range(8):
     data = torch.load("sdes/best_sde_" + str(i) + ".pth")
