@@ -249,7 +249,7 @@ os.makedirs("sdes", exist_ok=True)
 os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 
-training = True # Set to False to skip training and only generate fixations
+training = False # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
 subject_bar = tqdm.tqdm(range(8), desc="Subjects", leave=True, position=0)
 for i in subject_bar:
@@ -305,9 +305,9 @@ for i in subject_bar:
             target_padded = pad_sequence(target_points, batch_first=True)
 
             cd_losses = []
-            for i in range(batch.size(0)):
-                recon_pts = recon_x[i][mask[i].bool()]
-                target_pts = batch[i][mask[i].bool()]
+            for c in range(batch.size(0)):
+                recon_pts = recon_x[c][mask[c].bool()]
+                target_pts = batch[c][mask[c].bool()]
                 cd = chamfer_distance_pairwise(recon_pts, target_pts)
                 cd_losses.append(cd)
 
@@ -350,9 +350,9 @@ for i in subject_bar:
                 target_padded = pad_sequence(target_points, batch_first=True)
 
                 cd_losses = []
-                for i in range(batch.size(0)):
-                    recon_pts = recon_x[i][mask[i].bool()]
-                    target_pts = batch[i][mask[i].bool()]
+                for c in range(batch.size(0)):
+                    recon_pts = recon_x[c][mask[c].bool()]
+                    target_pts = batch[c][mask[c].bool()]
                     cd = chamfer_distance_pairwise(recon_pts, target_pts)
                     cd_losses.append(cd)
 
