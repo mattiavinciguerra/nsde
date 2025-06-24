@@ -212,7 +212,7 @@ def create_dataloaders(sbj_fixs, batch_size):
 latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
 hidden_size = 256 # Dimensione dello stato nascosto
-batch_size = 256 # Dimensione del batch
+batch_size = 128 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
