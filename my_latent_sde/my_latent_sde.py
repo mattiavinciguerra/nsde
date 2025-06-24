@@ -67,23 +67,29 @@ class LatentSDE(torchsde.SDEIto):
 
         self.decoder = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.Tanh(),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, input_size)
         )
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -140,7 +146,7 @@ class LatentSDE(torchsde.SDEIto):
         return recon_x
 
 class EarlyStopping:
-    def __init__(self, patience=20, delta=0):
+    def __init__(self, patience=30, delta=0):
         self.patience = patience
         self.counter = 0
         self.best_loss = None
@@ -222,6 +228,27 @@ criterion = nn.MSELoss()
 
 # In[ ]:
 
+alpha = 0.1  # Peso per la Chamfer Distance
+def chamfer_distance(x, y):
+    """
+    x: [B, N, 2] - Predizioni
+    y: [B, M, 2] - Dati reali (target)
+    Output: scalar loss
+    """
+    B, N, _ = x.size()
+    M = y.size(1)
+
+    # Espansione per broadcasting: [B, N, 1, 2] - [B, 1, M, 2] → [B, N, M, 2]
+    x_expanded = x.unsqueeze(2)  # [B, N, 1, 2]
+    y_expanded = y.unsqueeze(1)  # [B, 1, M, 2]
+
+    dist = torch.norm(x_expanded - y_expanded, dim=-1)  # [B, N, M]
+
+    cd_xy = dist.min(dim=2)[0]  # [B, N]
+    cd_yx = dist.min(dim=1)[0]  # [B, M]
+
+    loss = cd_xy.mean(dim=1) + cd_yx.mean(dim=1)  # [B]
+    return loss.mean()  # Scalar
 
 import random
 import matplotlib.pyplot as plt
@@ -232,9 +259,12 @@ os.makedirs("sdes", exist_ok=True)
 os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 
+training = True # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
 subject_bar = tqdm.tqdm(range(8), desc="Subjects", leave=True, position=0)
 for i in subject_bar:
+    if not training:
+        break
     if i < from_sbj:
         continue
     # Imposta il seed per la riproducibilità
@@ -273,7 +303,21 @@ for i in subject_bar:
 
             recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-            batch_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # Mask to ignore padded values
+            mse_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+
+            # CD usa solo i punti reali, quindi maschera necessaria
+            mask_bool = mask.bool()
+            recon_points = [recon_x[i][mask_bool[i]] for i in range(recon_x.size(0))]
+            target_points = [batch[i][mask_bool[i]] for i in range(batch.size(0))]
+
+            # Padded sequences per batch processing
+            recon_padded = pad_sequence(recon_points, batch_first=True)
+            target_padded = pad_sequence(target_points, batch_first=True)
+
+            cd_loss = chamfer_distance(recon_padded, target_padded)
+
+            batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
+
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
             # Backpropagation
@@ -297,7 +341,20 @@ for i in subject_bar:
 
                 recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-                batch_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # Mask to ignore padded values
+                mse_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+
+                # CD usa solo i punti reali, quindi maschera necessaria
+                mask_bool = mask.bool()
+                recon_points = [recon_x[i][mask_bool[i]] for i in range(recon_x.size(0))]
+                target_points = [batch[i][mask_bool[i]] for i in range(batch.size(0))]
+
+                # Padded sequences per batch processing
+                recon_padded = pad_sequence(recon_points, batch_first=True)
+                target_padded = pad_sequence(target_points, batch_first=True)
+
+                cd_loss = chamfer_distance(recon_padded, target_padded)
+
+                batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
                 val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
                 epoch_val_loss += batch_loss.item()
@@ -341,19 +398,6 @@ for i in subject_bar:
 # In[ ]:
 
 
-sdes = [LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device),
-        LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device),
-        LatentSDE(input_size, hidden_size, latent_size, device), LatentSDE(input_size, hidden_size, latent_size, device)]
-
-for i in range(8):
-    data = torch.load("sdes/best_sde_" + str(i) + ".pth")
-    sdes[i].load_state_dict(data['sde'])
-    sdes[i].eval()
-
-
-# In[ ]:
-
-
 sum = 0
 count = 0
 for sbj in fixs:
@@ -368,23 +412,38 @@ avg_fix_len = (int) (sum / count)
 
 
 import matplotlib.pyplot as plt
+import torch
+import pickle
 
 fig, axes = plt.subplots(2, 4, figsize=(16, 6))  # 2 righe, 4 colonne
-axes = axes.flatten()  # Rende l'array bidimensionale in un array 1D per iterare facilmente
+axes = axes.flatten()
 
 for i in range(8):
-    # Stato iniziale casuale
-    z0 = torch.randn(1, latent_size).to(device) # [1, latent_dim]
+    # Carica modello
+    data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'))
+    sde = LatentSDE(input_size, hidden_size, latent_size, device)
+    sde.load_state_dict(data['sde'])
+    sde.eval()
 
-    # Genera la traiettoria
+    # Carica test loader
+    test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
+    batch, mask = next(iter(test_loader))
+    batch = batch.to(device)
+    mask = mask.to(device)
+
+    # Seleziona il primo esempio (shape [1, T, 2] e [1, T])
+    x = batch[0].unsqueeze(0)
+    m = mask[0].unsqueeze(0)
+
     with torch.no_grad():
-        generated_fixation = sdes[i].generate_fixation(z0, avg_fix_len) # [avg_fix_len, 2]
+        pred = sde(x, m)  # Forward completo
 
-    # Visualizzazione
+    # Plot originale vs predetto
     ax = axes[i]
-    ax.plot(generated_fixation[:, 0], generated_fixation[:, 1])
-    ax.set_title("Subject " + str(i))
+    ax.plot(x[0, :, 0].cpu(), x[0, :, 1].cpu(), label='Originale', alpha=0.7)
+    ax.plot(pred[0, :, 0].cpu(), pred[0, :, 1].cpu(), label='Predetta', alpha=0.7)
+    ax.set_title(f"Subject {i}")
+    ax.legend()
 
 plt.tight_layout()
-plt.savefig("generated_fixations.png")
-
+plt.savefig("forward_vs_original.png")
