@@ -229,26 +229,16 @@ criterion = nn.MSELoss()
 # In[ ]:
 
 alpha = 0.1  # Peso per la Chamfer Distance
-def chamfer_distance(x, y):
+def chamfer_distance_pairwise(x, y):
     """
-    x: [B, N, 2] - Predizioni
-    y: [B, M, 2] - Dati reali (target)
+    x: [N, 2], y: [M, 2] - singole sequenze di fissazioni
     Output: scalar loss
     """
-    B, N, _ = x.size()
-    M = y.size(1)
-
-    # Espansione per broadcasting: [B, N, 1, 2] - [B, 1, M, 2] → [B, N, M, 2]
-    x_expanded = x.unsqueeze(2)  # [B, N, 1, 2]
-    y_expanded = y.unsqueeze(1)  # [B, 1, M, 2]
-
-    dist = torch.norm(x_expanded - y_expanded, dim=-1)  # [B, N, M]
-
-    cd_xy = dist.min(dim=2)[0]  # [B, N]
-    cd_yx = dist.min(dim=1)[0]  # [B, M]
-
-    loss = cd_xy.mean(dim=1) + cd_yx.mean(dim=1)  # [B]
-    return loss.mean()  # Scalar
+    dist = torch.cdist(x.unsqueeze(0), y.unsqueeze(0), p=2)  # [1, N, M]
+    dist = dist.squeeze(0)  # [N, M]
+    cd_xy = dist.min(dim=1)[0]
+    cd_yx = dist.min(dim=0)[0]
+    return cd_xy.mean() + cd_yx.mean()
 
 import random
 import matplotlib.pyplot as plt
@@ -314,7 +304,14 @@ for i in subject_bar:
             recon_padded = pad_sequence(recon_points, batch_first=True)
             target_padded = pad_sequence(target_points, batch_first=True)
 
-            cd_loss = chamfer_distance(recon_padded, target_padded)
+            cd_losses = []
+            for i in range(batch.size(0)):
+                recon_pts = recon_x[i][mask[i].bool()]
+                target_pts = batch[i][mask[i].bool()]
+                cd = chamfer_distance_pairwise(recon_pts, target_pts)
+                cd_losses.append(cd)
+
+            cd_loss = torch.stack(cd_losses).mean()
 
             batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
 
@@ -352,7 +349,14 @@ for i in subject_bar:
                 recon_padded = pad_sequence(recon_points, batch_first=True)
                 target_padded = pad_sequence(target_points, batch_first=True)
 
-                cd_loss = chamfer_distance(recon_padded, target_padded)
+                cd_losses = []
+                for i in range(batch.size(0)):
+                    recon_pts = recon_x[i][mask[i].bool()]
+                    target_pts = batch[i][mask[i].bool()]
+                    cd = chamfer_distance_pairwise(recon_pts, target_pts)
+                    cd_losses.append(cd)
+
+                cd_loss = torch.stack(cd_losses).mean()
 
                 batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
                 val_bar.set_postfix({"Batch Loss": batch_loss.item()})
