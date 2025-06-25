@@ -389,9 +389,9 @@ for i in range(n_sbj):
 
             mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
             
-            sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+            #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
 
-            batch_loss = mse_loss + sinkhorn_loss
+            batch_loss = mse_loss
 
             test_loss += batch_loss.item()
 
