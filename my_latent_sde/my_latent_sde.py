@@ -225,7 +225,7 @@ log_every = 1000
 lr = 1e-3
 
 mse = nn.MSELoss()
-sinkhorn = SamplesLoss("sinkhorn", p=2, blur=0.05, backend="tensorized")
+#sinkhorn = SamplesLoss("sinkhorn", p=2, blur=0.05, backend="tensorized")
 
 
 # # Main
