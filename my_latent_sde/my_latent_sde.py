@@ -190,7 +190,7 @@ def create_dataloaders(sbj_fixs, batch_size):
     random.shuffle(sbj_fixs)
 
     # 70% training, 15% validation, 15% test
-    train_size = int(0.7 * len(sbj_fixs))
+    train_size = max(1, int(0.7 * len(sbj_fixs)))
     val_size = int(0.15 * len(sbj_fixs))
     train_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[:train_size] for fix in img]
     val_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[train_size:train_size + val_size] for fix in img]
@@ -209,36 +209,29 @@ def create_dataloaders(sbj_fixs, batch_size):
 # In[7]:
 
 
+from geomloss import SamplesLoss
+
 latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
-hidden_size = 256 # Dimensione dello stato nascosto
-batch_size = 128 # Dimensione del batch
+hidden_size = 128 # Dimensione dello stato nascosto
+batch_size = 1 # 64 Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
 
-num_epochs = 200
+num_epochs = 1000
+val_every = 2000
 log_every = 10
 lr = 1e-3
 
-criterion = nn.MSELoss()
+mse = nn.MSELoss()
+sinkhorn = SamplesLoss(loss="sinkhorn", p=2, blur=0.05)
 
 
 # # Main
 
 # In[ ]:
 
-alpha = 0.1  # Peso per la Chamfer Distance
-def chamfer_distance_pairwise(x, y):
-    """
-    x: [N, 2], y: [M, 2] - singole sequenze di fissazioni
-    Output: scalar loss
-    """
-    dist = torch.cdist(x.unsqueeze(0), y.unsqueeze(0), p=2)  # [1, N, M]
-    dist = dist.squeeze(0)  # [N, M]
-    cd_xy = dist.min(dim=1)[0]
-    cd_yx = dist.min(dim=0)[0]
-    return cd_xy.mean() + cd_yx.mean()
 
 import random
 import matplotlib.pyplot as plt
@@ -249,20 +242,25 @@ os.makedirs("sdes", exist_ok=True)
 os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 
-training = False # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
-subject_bar = tqdm.tqdm(range(8), desc="Subjects", leave=True, position=0)
+n_sbj = 1
+training = True # Set to False to skip training and only generate fixations
+saving = True # Set to False to skip saving the model
+
+subject_bar = tqdm.tqdm(range(n_sbj), desc="Subjects", leave=True, position=0)
 for i in subject_bar:
     if not training:
         break
     if i < from_sbj:
         continue
-    # Imposta il seed per la riproducibilità
-    #random.seed(i)
-    #torch.manual_seed(i)
 
-    #print("Training subject " + str(i) + "...")
-    sbj_fixs = fixs[i]
+    #sbj_fixs = fixs[i]
+
+    # Overfitting on the first subject
+    sbj_fixs = [fixs[0]]         # soggetto 0
+    sbj_fixs[0] = [fixs[0][0]]   # immagine 0
+    sbj_fixs[0][0] = [fixs[0][0][0]]  # solo 1 fissazione
+    sbj_fixs = sbj_fixs[0]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
@@ -293,27 +291,11 @@ for i in subject_bar:
 
             recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-            mse_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+            mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
 
-            # CD usa solo i punti reali, quindi maschera necessaria
-            mask_bool = mask.bool()
-            recon_points = [recon_x[i][mask_bool[i]] for i in range(recon_x.size(0))]
-            target_points = [batch[i][mask_bool[i]] for i in range(batch.size(0))]
+            sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
 
-            # Padded sequences per batch processing
-            recon_padded = pad_sequence(recon_points, batch_first=True)
-            target_padded = pad_sequence(target_points, batch_first=True)
-
-            cd_losses = []
-            for c in range(batch.size(0)):
-                recon_pts = recon_x[c][mask[c].bool()]
-                target_pts = batch[c][mask[c].bool()]
-                cd = chamfer_distance_pairwise(recon_pts, target_pts)
-                cd_losses.append(cd)
-
-            cd_loss = torch.stack(cd_losses).mean()
-
-            batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
+            batch_loss = mse_loss + sinkhorn_loss
 
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -327,61 +309,47 @@ for i in subject_bar:
         epoch_train_loss /= len(train_loader)
         train_losses.append(epoch_train_loss)
 
-        # Validation
-        sde.eval() # Set the model to evaluation mode
         epoch_val_loss = 0.0
-        with torch.no_grad():
-            val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
-            for batch, mask in val_bar:
-                batch = batch.to(device)
-                mask = mask.to(device)
+        # Validation
+        if (epoch + 1) % val_every == 0:
+            sde.eval() # Set the model to evaluation mode
+            with torch.no_grad():
+                val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
+                for batch, mask in val_bar:
+                    batch = batch.to(device)
+                    mask = mask.to(device)
 
-                recon_x = sde(batch, mask)  # [B, T, latent_size]
+                    recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-                mse_loss = criterion(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+                    #mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+                    
+                    sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
 
-                # CD usa solo i punti reali, quindi maschera necessaria
-                mask_bool = mask.bool()
-                recon_points = [recon_x[i][mask_bool[i]] for i in range(recon_x.size(0))]
-                target_points = [batch[i][mask_bool[i]] for i in range(batch.size(0))]
+                    batch_loss = sinkhorn_loss
 
-                # Padded sequences per batch processing
-                recon_padded = pad_sequence(recon_points, batch_first=True)
-                target_padded = pad_sequence(target_points, batch_first=True)
+                    val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
-                cd_losses = []
-                for c in range(batch.size(0)):
-                    recon_pts = recon_x[c][mask[c].bool()]
-                    target_pts = batch[c][mask[c].bool()]
-                    cd = chamfer_distance_pairwise(recon_pts, target_pts)
-                    cd_losses.append(cd)
+                    epoch_val_loss += batch_loss.item()
 
-                cd_loss = torch.stack(cd_losses).mean()
+            epoch_val_loss /= len(val_loader)
+            val_losses.append(epoch_val_loss)
+            sde.train()
 
-                batch_loss = mse_loss + alpha * cd_loss  # alpha è un peso da tarare
-                val_bar.set_postfix({"Batch Loss": batch_loss.item()})
+            scheduler.step(epoch_val_loss)
+            early_stopping(epoch_val_loss)
 
-                epoch_val_loss += batch_loss.item()
-
-        epoch_val_loss /= len(val_loader)
-        val_losses.append(epoch_val_loss)
-        sde.train()
-
-        scheduler.step(epoch_val_loss)
-        early_stopping(epoch_val_loss)
-
-        if early_stopping.early_stop:
-            print(f"Early stopping triggered at epoch {epoch+1}")
-            break
+            if early_stopping.early_stop:
+                print(f"Early stopping triggered at epoch {epoch+1}")
+                break
 
         epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss, "Learning Rate": scheduler.get_last_lr()})
 
-        # Logging
-        #if epoch % log_every == 0:
-            #tqdm.notebook.tqdm.write(f"Epoch {epoch + 1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
+        if (num_epochs + 1) % log_every == 0:
+            tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
 
         # Saving the best model
-        if epoch_val_loss < best_val_loss:
+        if saving:
+        #if saving and epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss            
             best_epoch = epoch
             subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
@@ -422,7 +390,7 @@ import pickle
 fig, axes = plt.subplots(2, 4, figsize=(16, 6))  # 2 righe, 4 colonne
 axes = axes.flatten()
 
-for i in range(8):
+for i in range(n_sbj):
     # Carica modello
     data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'))
     sde = LatentSDE(input_size, hidden_size, latent_size, device)
@@ -430,8 +398,9 @@ for i in range(8):
     sde.eval()
 
     # Carica test loader
-    test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
-    batch, mask = next(iter(test_loader))
+    #test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
+    #batch, mask = next(iter(test_loader))
+    batch, mask = next(iter(train_loader))
     batch = batch.to(device)
     mask = mask.to(device)
 
@@ -445,7 +414,7 @@ for i in range(8):
     # Plot originale vs predetto
     ax = axes[i]
     ax.plot(x[0, :, 0].cpu(), x[0, :, 1].cpu(), label='Originale', alpha=0.7)
-    ax.plot(pred[0, :, 0].cpu(), pred[0, :, 1].cpu(), label='Predetta', alpha=0.7)
+    ax.plot(pred[0][:][0].cpu(), pred[0][:][1].cpu(), label='Predetta', alpha=0.7)
     ax.set_title(f"Subject {i}")
     ax.legend()
 
