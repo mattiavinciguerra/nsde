@@ -76,20 +76,20 @@ class LatentSDE(torchsde.SDEIto):
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -190,7 +190,7 @@ def create_dataloaders(sbj_fixs, batch_size):
     random.shuffle(sbj_fixs)
 
     # 70% training, 15% validation, 15% test
-    train_size = max(1, int(0.7 * len(sbj_fixs)))
+    train_size = int(0.7 * len(sbj_fixs))
     val_size = int(0.15 * len(sbj_fixs))
     train_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[:train_size] for fix in img]
     val_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[train_size:train_size + val_size] for fix in img]
@@ -214,18 +214,18 @@ from geomloss import SamplesLoss
 latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
 hidden_size = 128 # Dimensione dello stato nascosto
-batch_size = 1 # 64 Dimensione del batch
+batch_size = 64 # 64 Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
 
-num_epochs = 1000
-val_every = 2000
-log_every = 10
+num_epochs = 300
+val_every = 1
+log_every = 1000
 lr = 1e-3
 
 mse = nn.MSELoss()
-sinkhorn = SamplesLoss(loss="sinkhorn", p=2, blur=0.05)
+sinkhorn = SamplesLoss("sinkhorn", p=2, blur=0.05, backend="tensorized")
 
 
 # # Main
@@ -241,6 +241,7 @@ import os
 os.makedirs("sdes", exist_ok=True)
 os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
+os.makedirs("reconstructions", exist_ok=True)
 
 from_sbj = 0 # Starting subject index
 n_sbj = 1
@@ -254,13 +255,7 @@ for i in subject_bar:
     if i < from_sbj:
         continue
 
-    #sbj_fixs = fixs[i]
-
-    # Overfitting on the first subject
-    sbj_fixs = [fixs[0]]         # soggetto 0
-    sbj_fixs[0] = [fixs[0][0]]   # immagine 0
-    sbj_fixs[0][0] = [fixs[0][0][0]]  # solo 1 fissazione
-    sbj_fixs = sbj_fixs[0]
+    sbj_fixs = fixs[i]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
@@ -293,9 +288,9 @@ for i in subject_bar:
 
             mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
 
-            sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+            #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
 
-            batch_loss = mse_loss + sinkhorn_loss
+            batch_loss = mse_loss
 
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -321,11 +316,11 @@ for i in subject_bar:
 
                     recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-                    #mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+                    mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
                     
-                    sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+                    #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
 
-                    batch_loss = sinkhorn_loss
+                    batch_loss = mse_loss
 
                     val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -348,8 +343,7 @@ for i in subject_bar:
             tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
 
         # Saving the best model
-        if saving:
-        #if saving and epoch_val_loss < best_val_loss:
+        if saving and epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss            
             best_epoch = epoch
             subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
@@ -367,18 +361,6 @@ for i in subject_bar:
 
 # # Generation
 
-# In[ ]:
-
-
-sum = 0
-count = 0
-for sbj in fixs:
-    for img in sbj:
-        for fix in img:
-            sum += len(fix)
-            count += 1
-avg_fix_len = (int) (sum / count)
-
 
 # In[ ]:
 
@@ -387,36 +369,42 @@ import matplotlib.pyplot as plt
 import torch
 import pickle
 
-fig, axes = plt.subplots(2, 4, figsize=(16, 6))  # 2 righe, 4 colonne
-axes = axes.flatten()
-
 for i in range(n_sbj):
     # Carica modello
     data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'))
     sde = LatentSDE(input_size, hidden_size, latent_size, device)
     sde.load_state_dict(data['sde'])
     sde.eval()
+    print(f"Loaded SDE for Subject {i} from epoch {data['epoch']} with validation loss {data['val_loss']:.4f}")
 
     # Carica test loader
-    #test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
-    #batch, mask = next(iter(test_loader))
-    batch, mask = next(iter(train_loader))
-    batch = batch.to(device)
-    mask = mask.to(device)
-
-    # Seleziona il primo esempio (shape [1, T, 2] e [1, T])
-    x = batch[0].unsqueeze(0)
-    m = mask[0].unsqueeze(0)
-
+    test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
+    test_loss = 0.0
     with torch.no_grad():
-        pred = sde(x, m)  # Forward completo
+        for batch, mask in test_loader:
+            batch = batch.to(device)
+            mask = mask.to(device)
 
-    # Plot originale vs predetto
-    ax = axes[i]
-    ax.plot(x[0, :, 0].cpu(), x[0, :, 1].cpu(), label='Originale', alpha=0.7)
-    ax.plot(pred[0][:][0].cpu(), pred[0][:][1].cpu(), label='Predetta', alpha=0.7)
-    ax.set_title(f"Subject {i}")
-    ax.legend()
+            recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-plt.tight_layout()
-plt.savefig("forward_vs_original.png")
+            mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+            
+            sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+
+            batch_loss = mse_loss + sinkhorn_loss
+
+            test_loss += batch_loss.item()
+
+            for j in range(batch.size(0)):
+                plt.scatter(batch[j, mask[j].bool(), 0].cpu().numpy(), batch[j, mask[j].bool(), 1].cpu().numpy(), color='blue', label='Original')
+                plt.scatter(recon_x[j, mask[j].bool(), 0].cpu().numpy(), recon_x[j, mask[j].bool(), 1].cpu().numpy(), color='red', label='Reconstructed')
+                plt.title(f"Subject {i} - Image {j}")
+                plt.xlabel("X Coordinate")
+                plt.ylabel("Y Coordinate")
+                plt.legend()
+                plt.savefig(f"reconstructions/reconstruction_sbj_{i}_img_{j}.png")
+                plt.clf()
+
+        test_loss /= len(test_loader)
+    
+    print(f"Test Loss for Subject {i}: {test_loss:.4f}")
