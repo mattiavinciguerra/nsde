@@ -199,7 +199,7 @@ class FixationDataset(Dataset):
         return self.sequences[idx]
 
 class BucketSampler(Sampler):
-    def __init__(self, lengths, batch_size, bucket_size=64):
+    def __init__(self, lengths, batch_size, bucket_size):
         self.batch_size = batch_size
         self.buckets = []
 
@@ -234,7 +234,7 @@ def collate_fn(batch):
     return padded, mask.float()
 
 
-def create_dataloaders(sbj_fixs, batch_size, bucket_size=64):
+def create_dataloaders(sbj_fixs, batch_size, bucket_size):
     random.shuffle(sbj_fixs)
 
     train_size = int(0.7 * len(sbj_fixs))
@@ -319,7 +319,7 @@ for i in subject_bar:
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5)
     early_stopping = EarlyStopping(patience=20)
 
-    train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size)
+    train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
 
     with open(f"test_loaders/test_loader_{i}.pkl", "wb") as f:
         pickle.dump(test_loader, f)
