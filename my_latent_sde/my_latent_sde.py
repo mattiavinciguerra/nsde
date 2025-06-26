@@ -36,8 +36,14 @@ from torch.nn.utils.rnn import pack_padded_sequence
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
-        self.project = nn.Linear(hidden_size, latent_size)
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True)
+        self.project = nn.Sequential(
+            nn.Linear(2 * hidden_size, hidden_size),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, latent_size)
+        )
+        self.norm = nn.LayerNorm(latent_size)
 
     def forward(self, batch, lengths):
         """
@@ -46,11 +52,14 @@ class Encoder(nn.Module):
         """
         packed = pack_padded_sequence(batch, lengths.cpu(), batch_first=True, enforce_sorted=False)
         packed_out, last_hidden_states = self.gru(packed)
-        # packed_out: [B, T, H] - Output of the GRU for each time step, not used here
-        # last_hidden_states: [1, B, H] - Last hidden state for each fixation in the batch
-        last_hidden_states = last_hidden_states.squeeze(0)  # [1, B, H] -> [B, H]
+        # packed_out: [B, T, 2 * H] - Output of the GRU for each time step, not used here
+        # last_hidden_states: [2, B, H] - Last hidden states for each direction in the batch
+        # last_hidden_states is of shape [num_directions, batch_size, hidden_size]
+        # We take the last hidden state of the forward direction (index 0) and the last hidden state of the backward direction (index 1)
+        # and concatenate them
+        last_hidden_states = last_hidden_states.transpose(0, 1).reshape(batch.size(0), -1) # [B, 2 * H]
         latent_states = self.project(last_hidden_states)  # [B, latent_size]
-        return latent_states
+        return self.norm(latent_states)
 
 
 # # SDE
@@ -67,30 +76,31 @@ class LatentSDE(torchsde.SDEIto):
 
         self.decoder = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Linear(hidden_size, input_size)
         )
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.Softplus(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
-            nn.Softplus(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            #nn.Dropout(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            #nn.Dropout(0.1),
-            nn.Linear(hidden_size, latent_size)
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, latent_size),
+            nn.Softplus()
         )
 
     def f(self, t, y):
@@ -170,38 +180,79 @@ class EarlyStopping:
 # In[5]:
 
 
+from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.nn.utils.rnn import pad_sequence
-
-def collate_fn(batch):
-    lengths = torch.tensor([seq.shape[0] for seq in batch])
-    # Padding the sequences to the maximum length in the batch
-    padded = pad_sequence(batch, batch_first=True) # [B, T, 2]
-    mask = torch.arange(padded.shape[1]).unsqueeze(0) < lengths.unsqueeze(1)
-    mask = mask.float()  # Convert to float for compatibility with loss functions
-    return padded, mask
-
-
-# In[6]:
-
-
+from collections import defaultdict
+import torch
 import random
 
-def create_dataloaders(sbj_fixs, batch_size):
+
+class FixationDataset(Dataset):
+    def __init__(self, sequences):
+        self.sequences = sequences
+        self.lengths = [len(seq) for seq in sequences]
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, idx):
+        return self.sequences[idx]
+
+class BucketSampler(Sampler):
+    def __init__(self, lengths, batch_size, bucket_size=64):
+        self.batch_size = batch_size
+        self.buckets = []
+
+        # 1. Raggruppa tutti gli indici e relative lunghezze
+        data = list(enumerate(lengths))
+
+        # 2. Ordina per lunghezza
+        data.sort(key=lambda x: x[1])
+
+        # 3. Suddividi in bucket di dimensione `bucket_size`
+        for i in range(0, len(data), bucket_size):
+            bucket = data[i:i + bucket_size]
+            indices = [idx for idx, _ in bucket]
+            random.shuffle(indices)
+            self.buckets.append(indices)
+
+        # Shuffle globale sui batch
+        random.shuffle(self.buckets)
+
+    def __iter__(self):
+        return iter(self.buckets)
+
+    def __len__(self):
+        return len(self.buckets)
+
+
+def collate_fn(batch):
+    lengths = [seq.shape[0] for seq in batch]
+    max_len = max(lengths)
+    padded = pad_sequence(batch, batch_first=True)
+    mask = torch.arange(max_len)[None, :] < torch.tensor(lengths)[:, None]
+    return padded, mask.float()
+
+
+def create_dataloaders(sbj_fixs, batch_size, bucket_size=64):
     random.shuffle(sbj_fixs)
 
-    # 70% training, 15% validation, 15% test
     train_size = int(0.7 * len(sbj_fixs))
     val_size = int(0.15 * len(sbj_fixs))
-    train_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[:train_size] for fix in img]
-    val_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[train_size:train_size + val_size] for fix in img]
-    test_set = [torch.tensor(fix, dtype=torch.float) for img in sbj_fixs[train_size + val_size:] for fix in img]
 
-    # DataLoader
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    def preprocess(split):
+        return [torch.tensor(fix, dtype=torch.float) for img in split for fix in img]
 
-    return train_loader, val_loader, test_loader
+    train_set = preprocess(sbj_fixs[:train_size])
+    val_set = preprocess(sbj_fixs[train_size:train_size + val_size])
+    test_set = preprocess(sbj_fixs[train_size + val_size:])
+
+    def make_loader(data):
+        dataset = FixationDataset(data)
+        sampler = BucketSampler(dataset.lengths, batch_size=batch_size, bucket_size=bucket_size)
+        return DataLoader(dataset, batch_sampler=sampler, collate_fn=collate_fn)
+
+    return make_loader(train_set), make_loader(val_set), make_loader(test_set)
 
 
 # # Parameters
@@ -209,23 +260,29 @@ def create_dataloaders(sbj_fixs, batch_size):
 # In[7]:
 
 
-from geomloss import SamplesLoss
+def chamfer_distance(x, y):
+    # x, y: [B, N, D] e [B, M, D]
+    x_exp = x.unsqueeze(2)  # [B, N, 1, D]
+    y_exp = y.unsqueeze(1)  # [B, 1, M, D]
+    dist = torch.norm(x_exp - y_exp, dim=-1)  # [B, N, M]
+    min_x_to_y = dist.min(dim=2).values  # [B, N]
+    min_y_to_x = dist.min(dim=1).values  # [B, M]
+    return (min_x_to_y.mean(dim=1) + min_y_to_x.mean(dim=1)).mean()
 
 latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
 hidden_size = 128 # Dimensione dello stato nascosto
-batch_size = 128 # 64 Dimensione del batch
+batch_size = 64 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
 
 num_epochs = 300
-val_every = 1
+val_every = 10
 log_every = 1000
 lr = 1e-3
 
 mse = nn.MSELoss()
-#sinkhorn = SamplesLoss("sinkhorn", p=2, blur=0.05, backend="tensorized")
 
 
 # # Main
@@ -281,16 +338,18 @@ for i in subject_bar:
         epoch_train_loss = 0.0
         train_bar = tqdm.tqdm(train_loader, desc="Batches", leave=False, position=2)
         for batch, mask in train_bar:
+            #print(f"Processing batch of size {batch.shape}, lengths = {[int(mask[i].sum()) for i in range(mask.shape[0])]}")
+
             batch = batch.to(device)
             mask = mask.to(device)
 
-            recon_x = sde(batch, mask)  # [B, T, latent_size]
+            recon_x = sde(batch, mask) # [B, T, latent_size]
 
-            mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # MSE loss on the masked elements
 
-            #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+            chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # Chamfer distance on the masked elements
 
-            batch_loss = mse_loss
+            batch_loss = mse_loss + chamfer_loss
 
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -318,9 +377,9 @@ for i in subject_bar:
 
                     mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
                     
-                    #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+                    chamfer_loss = chamfer_distance(recon_x[mask.bool()], batch[mask.bool()])
 
-                    batch_loss = mse_loss
+                    batch_loss = mse_loss + chamfer_loss
 
                     val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -374,6 +433,7 @@ for i in range(n_sbj):
     data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'))
     sde = LatentSDE(input_size, hidden_size, latent_size, device)
     sde.load_state_dict(data['sde'])
+    sde.to(device)
     sde.eval()
     print(f"Loaded SDE for Subject {i} from epoch {data['epoch']} with validation loss {data['val_loss']:.4f}")
 
@@ -389,15 +449,15 @@ for i in range(n_sbj):
 
             mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
             
-            #sinkhorn_loss = sinkhorn(recon_x[mask.bool()], batch[mask.bool()])
+            chamfer_loss = chamfer_distance(recon_x[mask.bool()], batch[mask.bool()])
 
-            batch_loss = mse_loss
+            batch_loss = mse_loss + chamfer_loss
 
             test_loss += batch_loss.item()
 
             for j in range(batch.size(0)):
-                plt.scatter(batch[j, mask[j].bool(), 0].cpu().numpy(), batch[j, mask[j].bool(), 1].cpu().numpy(), color='blue', label='Original')
-                plt.scatter(recon_x[j, mask[j].bool(), 0].cpu().numpy(), recon_x[j, mask[j].bool(), 1].cpu().numpy(), color='red', label='Reconstructed')
+                plt.plot(batch[j, mask[j].bool(), 0].cpu().detach().numpy(), batch[j, mask[j].bool(), 1].cpu().detach().numpy(), color='blue', label='Original')
+                plt.plot(recon_x[j, mask[j].bool(), 0].cpu().detach().numpy(), recon_x[j, mask[j].bool(), 1].cpu().detach().numpy(), color='red', label='Reconstructed')
                 plt.title(f"Subject {i} - Image {j}")
                 plt.xlabel("X Coordinate")
                 plt.ylabel("Y Coordinate")
