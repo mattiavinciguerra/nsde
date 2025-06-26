@@ -272,7 +272,7 @@ def chamfer_distance(x, y):
 latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
 hidden_size = 128 # Dimensione dello stato nascosto
-batch_size = 64 # Dimensione del batch
+batch_size = 128 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
@@ -345,9 +345,9 @@ for i in subject_bar:
 
             recon_x = sde(batch, mask) # [B, T, latent_size]
 
-            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # MSE loss on the masked elements
+            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-            chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1)) # Chamfer distance on the masked elements
+            chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
             batch_loss = mse_loss + chamfer_loss
 
@@ -375,9 +375,9 @@ for i in subject_bar:
 
                     recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-                    mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+                    mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
                     
-                    chamfer_loss = chamfer_distance(recon_x[mask.bool()], batch[mask.bool()])
+                    chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
                     batch_loss = mse_loss + chamfer_loss
 
