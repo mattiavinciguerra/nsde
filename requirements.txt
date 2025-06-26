@@ -3,4 +3,3 @@ torch
 torchsde
 matplotlib
 tqdm
-geomloss
