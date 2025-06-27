@@ -37,13 +37,13 @@ class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
         self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True)
+        self.norm = nn.LayerNorm(latent_size)
         self.project = nn.Sequential(
             nn.Linear(2 * hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, latent_size)
         )
-        self.norm = nn.LayerNorm(latent_size)
 
     def forward(self, batch, lengths):
         """
@@ -77,28 +77,27 @@ class LatentSDE(torchsde.SDEIto):
         self.decoder = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, input_size)
         )
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.3),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
@@ -269,9 +268,9 @@ def chamfer_distance(x, y):
     min_y_to_x = dist.min(dim=1).values  # [B, M]
     return (min_x_to_y.mean(dim=1) + min_y_to_x.mean(dim=1)).mean()
 
-latent_size = 16 # Dimensionalità dello spazio latente
+latent_size = 8 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
-hidden_size = 128 # Dimensione dello stato nascosto
+hidden_size = 64 # Dimensione dello stato nascosto
 batch_size = 128 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -312,9 +311,9 @@ for i in subject_bar:
     sbj_fixs = fixs[i]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
-    optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
+    optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = 0.5 every 20 epochs without improvements
-    early_stopping = EarlyStopping(patience=30) # Stop training if validation loss does not improve for 20 epochs
+    early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for 30 epochs
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
 
@@ -345,6 +344,9 @@ for i in subject_bar:
             mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
             chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+
+            # print loss
+            print(f"MSE Loss: {mse_loss.item()}, Chamfer Loss: {chamfer_loss.item()}")
 
             batch_loss = mse_loss + chamfer_loss
 
