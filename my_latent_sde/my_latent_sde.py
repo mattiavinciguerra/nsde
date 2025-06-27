@@ -447,9 +447,9 @@ for i in range(n_sbj):
 
             recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-            mse_loss = mse(recon_x[mask.bool()], batch[mask.bool()])  # MSE loss on the masked elements
+            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))  # MSE loss on the masked elements
             
-            chamfer_loss = chamfer_distance(recon_x[mask.bool()], batch[mask.bool()])
+            chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
             batch_loss = mse_loss + chamfer_loss
 
