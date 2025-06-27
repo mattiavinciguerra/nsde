@@ -156,7 +156,7 @@ class LatentSDE(torchsde.SDEIto):
         return recon_x
 
 class EarlyStopping:
-    def __init__(self, patience=30, delta=0):
+    def __init__(self, patience=20, delta=0):
         self.patience = patience
         self.counter = 0
         self.best_loss = None
@@ -278,7 +278,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
 
 num_epochs = 300
-val_every = 10
+val_every = 1
 log_every = 1000
 lr = 1e-3
 
@@ -300,15 +300,12 @@ os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 os.makedirs("reconstructions", exist_ok=True)
 
+training = False # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
-n_sbj = 1
-training = True # Set to False to skip training and only generate fixations
-saving = True # Set to False to skip saving the model
+n_sbj = 1 # Number of subjects to train on
 
-subject_bar = tqdm.tqdm(range(n_sbj), desc="Subjects", leave=True, position=0)
+subject_bar = tqdm.tqdm(range(n_sbj) if training else [], desc="Subjects", leave=True, position=0)
 for i in subject_bar:
-    if not training:
-        break
     if i < from_sbj:
         continue
 
@@ -316,8 +313,8 @@ for i in subject_bar:
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5)
-    early_stopping = EarlyStopping(patience=20)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5) # lr * = 0.5 every 10 epochs without improvements
+    early_stopping = EarlyStopping(patience=20) # Stop training if validation loss does not improve for 20 epochs
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
 
@@ -363,9 +360,10 @@ for i in subject_bar:
         epoch_train_loss /= len(train_loader)
         train_losses.append(epoch_train_loss)
 
-        epoch_val_loss = 0.0
+        epoch_val_loss = float('inf')  # Initialize validation loss to infinity
         # Validation
         if (epoch + 1) % val_every == 0:
+            epoch_val_loss = 0.0
             sde.eval() # Set the model to evaluation mode
             with torch.no_grad():
                 val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
@@ -402,7 +400,7 @@ for i in subject_bar:
             tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
 
         # Saving the best model
-        if saving and epoch_val_loss < best_val_loss:
+        if epoch_val_loss < best_val_loss:
             best_val_loss = epoch_val_loss            
             best_epoch = epoch
             subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
