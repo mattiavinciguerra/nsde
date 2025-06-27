@@ -345,9 +345,6 @@ for i in subject_bar:
 
             chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-            # print loss
-            print(f"MSE Loss: {mse_loss.item()}, Chamfer Loss: {chamfer_loss.item()}")
-
             batch_loss = mse_loss + chamfer_loss
 
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
