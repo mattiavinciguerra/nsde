@@ -428,7 +428,7 @@ import pickle
 
 for i in range(n_sbj):
     # Carica modello
-    data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'))
+    data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'), weights_only=True)
     sde = LatentSDE(input_size, hidden_size, latent_size, device)
     sde.load_state_dict(data['sde'])
     sde.to(device)
