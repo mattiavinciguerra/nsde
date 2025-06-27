@@ -300,7 +300,7 @@ os.makedirs("losses", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 os.makedirs("reconstructions", exist_ok=True)
 
-training = False # Set to False to skip training and only generate fixations
+training = True # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
 n_sbj = 1 # Number of subjects to train on
 
