@@ -156,7 +156,7 @@ class LatentSDE(torchsde.SDEIto):
         return recon_x
 
 class EarlyStopping:
-    def __init__(self, patience=20, delta=0):
+    def __init__(self, patience=30, delta=0):
         self.patience = patience
         self.counter = 0
         self.best_loss = None
@@ -313,8 +313,8 @@ for i in subject_bar:
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5) # lr * = 0.5 every 10 epochs without improvements
-    early_stopping = EarlyStopping(patience=20) # Stop training if validation loss does not improve for 20 epochs
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = 0.5 every 20 epochs without improvements
+    early_stopping = EarlyStopping(patience=30) # Stop training if validation loss does not improve for 20 epochs
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
 
