@@ -41,7 +41,7 @@ class Encoder(nn.Module):
         self.project = nn.Sequential(
             nn.Linear(2 * hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -77,27 +77,27 @@ class LatentSDE(torchsde.SDEIto):
         self.decoder = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, input_size)
         )
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
@@ -316,6 +316,12 @@ for i in subject_bar:
     early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for 30 epochs
 
     train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
+
+    with open(f"train_loaders/train_loader_{i}.pkl", "wb") as f:
+        pickle.dump(train_loader, f)
+
+    with open(f"val_loaders/val_loader_{i}.pkl", "wb") as f:
+        pickle.dump(val_loader, f)
 
     with open(f"test_loaders/test_loader_{i}.pkl", "wb") as f:
         pickle.dump(test_loader, f)
