@@ -296,6 +296,8 @@ import os
 
 os.makedirs("sdes", exist_ok=True)
 os.makedirs("losses", exist_ok=True)
+os.makedirs("train_loaders", exist_ok=True)
+os.makedirs("val_loaders", exist_ok=True)
 os.makedirs("test_loaders", exist_ok=True)
 os.makedirs("reconstructions", exist_ok=True)
 
