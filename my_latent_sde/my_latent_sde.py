@@ -41,7 +41,7 @@ class Encoder(nn.Module):
         self.project = nn.Sequential(
             nn.Linear(2 * hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -77,27 +77,27 @@ class LatentSDE(torchsde.SDEIto):
         self.decoder = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, input_size)
         )
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
