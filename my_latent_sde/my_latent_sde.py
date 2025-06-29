@@ -36,12 +36,12 @@ from torch.nn.utils.rnn import pack_padded_sequence
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True) # GRU bidirezionale
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
         #self.norm = nn.LayerNorm(hidden_size * 2)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.ReLU(),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -69,8 +69,8 @@ class Decoder(nn.Module):
         #self.norm = nn.LayerNorm(hidden_size)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.ReLU(),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, input_size)
         )
 
@@ -102,21 +102,21 @@ class LatentSDE(torchsde.SDEIto):
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.ReLU(),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.1),
+            nn.ReLU(),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.1),
+            #nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
@@ -332,7 +332,7 @@ for i in subject_bar:
     sbj_fixs = fixs[i]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
-    sde = torch.compile(sde) # Compila il modello per ottimizzare le prestazioni
+    #sde = torch.compile(sde) # Compila il modello per ottimizzare le prestazioni
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = 0.5 every 20 epochs without improvements
     early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for 30 epochs
