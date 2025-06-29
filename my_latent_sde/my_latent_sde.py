@@ -39,7 +39,7 @@ class Encoder(nn.Module):
         self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=False) # GRU bidirezionale
         self.norm = nn.LayerNorm(latent_size)
         self.project = nn.Sequential(
-            nn.Linear(2 * hidden_size, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
             nn.Dropout(0.2),
             nn.Linear(hidden_size, latent_size)
