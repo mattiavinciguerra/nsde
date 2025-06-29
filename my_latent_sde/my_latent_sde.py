@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# TODO:
+# - preprocessing sui dati togliendo le fissazioni troppo lunghe (ho già aggiunto la stampa della lunghezza delle fissazioni)
+# - provare con norm sistemata (già sistemato nel codice, da fare push e pull)
+# - provare solo mse
+# - provare gru nel decoder (bidi o uni)
+# - capire se c'è clustering nel latent
+
 # # Loading data
 
 # In[ ]:
@@ -36,10 +43,10 @@ from torch.nn.utils.rnn import pack_padded_sequence
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=False) # GRU bidirezionale
-        self.norm = nn.LayerNorm(latent_size)
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True) # GRU bidirezionale
+        self.norm = nn.LayerNorm(hidden_size * 2)  # Normalizza gli stati nascosti concatenati
         self.project = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
+            nn.Linear(hidden_size * 2, hidden_size),
             nn.LeakyReLU(0.1),
             nn.Dropout(0.2),
             nn.Linear(hidden_size, latent_size)
@@ -58,8 +65,9 @@ class Encoder(nn.Module):
         # We take the last hidden state of the forward direction (index 0) and the last hidden state of the backward direction (index 1)
         # and concatenate them
         last_hidden_states = last_hidden_states.transpose(0, 1).reshape(batch.size(0), -1) # [B, 2 * H]
-        latent_states = self.project(last_hidden_states)  # [B, latent_size]
-        return self.norm(latent_states)
+        norm = self.norm(last_hidden_states)  # Normalize the last hidden states
+        latent_states = self.project(norm)  # [B, latent_size]
+        return latent_states
 
 
 # # SDE
@@ -351,9 +359,9 @@ for i in subject_bar:
 
             mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-            chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+            #chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-            batch_loss = mse_loss + chamfer_loss
+            batch_loss = mse_loss #+ chamfer_loss
 
             train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
@@ -382,9 +390,9 @@ for i in subject_bar:
 
                     mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
                     
-                    chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+                    #chamfer_loss = chamfer_distance(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-                    batch_loss = mse_loss + chamfer_loss
+                    batch_loss = mse_loss #+ chamfer_loss
 
                     val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
