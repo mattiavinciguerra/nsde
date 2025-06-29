@@ -36,7 +36,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True)
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=False) # GRU bidirezionale
         self.norm = nn.LayerNorm(latent_size)
         self.project = nn.Sequential(
             nn.Linear(2 * hidden_size, hidden_size),
