@@ -43,12 +43,12 @@ from torch.nn.utils.rnn import pack_padded_sequence
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True) # GRU bidirezionale
-        self.norm = nn.LayerNorm(hidden_size * 2)  # Normalizza gli stati nascosti concatenati
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True) # GRU bidirezionale
+        #self.norm = nn.LayerNorm(hidden_size * 2)
         self.project = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),
+            nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -65,9 +65,32 @@ class Encoder(nn.Module):
         # We take the last hidden state of the forward direction (index 0) and the last hidden state of the backward direction (index 1)
         # and concatenate them
         last_hidden_states = last_hidden_states.transpose(0, 1).reshape(batch.size(0), -1) # [B, 2 * H]
-        norm = self.norm(last_hidden_states)  # Normalize the last hidden states
-        latent_states = self.project(norm)  # [B, latent_size]
+        latent_states = self.project(last_hidden_states)  # [B, latent_size]
         return latent_states
+    
+# # Decoder
+class Decoder(nn.Module):
+    def __init__(self, input_size, hidden_size, latent_size):
+        super().__init__()
+        self.gru = nn.GRU(input_size=latent_size + 1, hidden_size=hidden_size, batch_first=True)
+        #self.norm = nn.LayerNorm(hidden_size)
+        self.project = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, input_size)
+        )
+
+    def forward(self, zs, ts):
+        """
+        z0: [B, latent_size] - Stato latente iniziale
+        length: int - Lunghezza della sequenza da generare
+        """
+        ts = ts.unsqueeze(0).expand(zs.size(0), -1).unsqueeze(-1)
+        inp = torch.cat([zs, ts], dim=-1)  # [B, T, latent_size+1]
+        out, _ = self.gru(inp)  # [B, T, H]
+        out = self.project(out)  # [B, T, input_size]
+        return out
 
 
 # # SDE
@@ -82,30 +105,25 @@ class LatentSDE(torchsde.SDEIto):
 
         self.encoder = Encoder(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size)
 
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_size, hidden_size),
-            nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, input_size)
-        )
+        self.decoder = Decoder(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size)
 
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
@@ -158,7 +176,7 @@ class LatentSDE(torchsde.SDEIto):
         zs = torchsde.sdeint(self, latent_states, ts) # [T, B, latent_size]
         zs = zs.permute(1, 0, 2) # [B, T, latent_size]
 
-        recon_x = self.decoder(zs) # [B, T, input_size]
+        recon_x = self.decoder(zs, ts) # [B, T, input_size]
 
         return recon_x
 
