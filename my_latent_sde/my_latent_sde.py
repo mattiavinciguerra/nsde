@@ -1,13 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# TODO:
-# - preprocessing sui dati togliendo le fissazioni troppo lunghe (ho già aggiunto la stampa della lunghezza delle fissazioni)
-# - provare con norm sistemata (già sistemato nel codice, da fare push e pull)
-# - provare solo mse
-# - provare gru nel decoder (bidi o uni)
-# - capire se c'è clustering nel latent
-
 # # Loading data
 
 # In[ ]:
@@ -266,7 +259,7 @@ def create_dataloaders(sbj_fixs, batch_size, bucket_size):
     val_size = int(0.15 * len(sbj_fixs))
 
     def preprocess(split):
-        return [torch.tensor(fix, dtype=torch.float) for img in split for fix in img]
+        return [torch.tensor(fix, dtype=torch.float) for img in split for fix in img if len(fix) <= 1000]
 
     train_set = preprocess(sbj_fixs[:train_size])
     val_set = preprocess(sbj_fixs[train_size:train_size + val_size])
@@ -339,6 +332,7 @@ for i in subject_bar:
     sbj_fixs = fixs[i]
 
     sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
+    sde = torch.compile(sde) # Compila il modello per ottimizzare le prestazioni
     optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = 0.5 every 20 epochs without improvements
     early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for 30 epochs
