@@ -47,6 +47,7 @@ class Encoder(nn.Module):
         latent_states = self.project(last_hidden_states)  # [B, latent_size]
         return latent_states
 
+from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence
 
 # Decoder: maps latent space to fixation coordinates
 class Decoder(nn.Module):
@@ -60,16 +61,39 @@ class Decoder(nn.Module):
             nn.Linear(hidden_size, input_size)
         )
 
-    def forward(self, zs, ts):
+    def forward(self, zs, lengths, ts):
         """
-        z0: [B, latent_size] - Stato latente iniziale
-        length: int - Lunghezza della sequenza da generare
+        zs: Tensor of shape [B, T, latent_size]
+        ts: Tensor of shape [T] (time steps)
+        lengths: Tensor of shape [B] (length of each sequence)
         """
-        ts = ts.unsqueeze(0).expand(zs.size(0), -1).unsqueeze(-1)
-        inp = torch.cat([zs, ts], dim=-1) # [B, T, latent_size+1]
-        out, _ = self.gru(inp) # [B, T, H]
-        out = self.project(out) # [B, T, input_size]
-        return out
+        # Expand ts to shape [B, T, 1]
+        ts = ts.unsqueeze(0).expand(zs.size(0), -1).unsqueeze(-1)  # [B, T, 1]
+
+        # Concatenate along feature dimension: [B, T, latent_size + 1]
+        zt = torch.cat([zs, ts], dim=-1)
+
+        # Pack the sequence
+        packed = pack_padded_sequence(zt, lengths.cpu(), batch_first=True, enforce_sorted=False)
+
+        # Pass through GRU
+        out_packed, _ = self.gru(packed)
+
+        # Apply linear projection to hidden states
+        projected = self.project(out_packed.data)  # shape: [sum(lengths), output_size]
+
+        # Re-wrap into PackedSequence
+        projected_packed = PackedSequence(
+            data=projected,
+            batch_sizes=out_packed.batch_sizes,
+            sorted_indices=out_packed.sorted_indices,
+            unsorted_indices=out_packed.unsorted_indices
+        )
+
+        # Unpack to get [B, T, 2]
+        out_padded, _ = pad_packed_sequence(projected_packed, batch_first=True)
+
+        return out_padded  # [B, T, 2]
 
 
 # SDE
@@ -147,7 +171,7 @@ class LatentSDE(torchsde.SDEIto):
         zs = torchsde.sdeint(self, latent_states, ts) # [T, B, latent_size]
         zs = zs.permute(1, 0, 2) # [B, T, latent_size]
 
-        recon_x = self.decoder(zs, ts) # [B, T, input_size]
+        recon_x = self.decoder(zs, lengths, ts) # [B, T, input_size]
 
         return recon_x
 
@@ -250,10 +274,10 @@ def create_dataloaders(sbj_fixs, batch_size, bucket_size):
 
 
 # Parameters
-latent_size = 8 # Dimensionalità dello spazio latente
+latent_size = 16 # Dimensionalità dello spazio latente
 input_size = 2 # Coppie di coordinate
 hidden_size = 64 # Dimensione dello stato nascosto
-batch_size = 64 # Dimensione del batch
+batch_size = 32 # Dimensione del batch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print("Using device:", device)
@@ -281,7 +305,7 @@ os.makedirs("reconstructions", exist_ok=True)
 os.makedirs("reconstructions/test", exist_ok=True)
 os.makedirs("reconstructions/train", exist_ok=True)
 
-training = False # Set to False to skip training and only generate fixations
+training = True # Set to False to skip training and only generate fixations
 from_sbj = 0 # Starting subject index
 n_sbj = 1 # Number of subjects to train on
 
