@@ -1,25 +1,11 @@
-# Loading data
-
-import pickle
-
-with open("../dataset/fixs.pkl", "rb") as f:
-    fixs = pickle.load(f)
-
-#print(len(fixs), len(fixs[0]), len(fixs[0][0]), len(fixs[0][0][0]))
-# n_sbj x n_img x n_fix x n_coord x 2
-
-
-# SDE
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchsde
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence
 
-
-# Encoder: maps fixation coordinates to latent space
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
@@ -47,9 +33,6 @@ class Encoder(nn.Module):
         latent_states = self.project(last_hidden_states)  # [B, latent_size]
         return latent_states
 
-from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence
-
-# Decoder: maps latent space to fixation coordinates
 class Decoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
@@ -64,8 +47,8 @@ class Decoder(nn.Module):
     def forward(self, zs, lengths, ts):
         """
         zs: Tensor of shape [B, T, latent_size]
-        ts: Tensor of shape [T] (time steps)
         lengths: Tensor of shape [B] (length of each sequence)
+        ts: Tensor of shape [T] (time steps)
         """
         # Expand ts to shape [B, T, 1]
         ts = ts.unsqueeze(0).expand(zs.size(0), -1).unsqueeze(-1)  # [B, T, 1]
@@ -95,8 +78,6 @@ class Decoder(nn.Module):
 
         return out_padded  # [B, T, 2]
 
-
-# SDE
 class LatentSDE(torchsde.SDEIto):
     def __init__(self, input_size, hidden_size, latent_size, device):
         super().__init__(noise_type="diagonal")
@@ -129,14 +110,29 @@ class LatentSDE(torchsde.SDEIto):
     def g(self, t, y):
         return self.diffusion_net(y)
 
+    def forward(self, batch, mask):
+        """
+        batch: [B, T, 2] - Batches of fixations (Batch size, Sequence length, 2 coordinates)
+        lengths: [B] - Lengths of each fixation in the batch
+        """
+        ts = torch.linspace(0, 1, batch.size(1), device=self.device) # [T] - Time steps for the SDE
+
+        lengths = mask.sum(dim=1).long() # Fixations lengths
+        latent_states = self.encoder(batch, lengths) # [B, latent_size] - z0
+
+        zs = torchsde.sdeint(self, latent_states, ts) # [T, B, latent_size]
+        zs = zs.permute(1, 0, 2) # [B, T, latent_size]
+
+        recon_x = self.decoder(zs, lengths, ts) # [B, T, input_size]
+
+        return recon_x
+
     def encode(self, batch, mask):
         """
         batch: [B, T, 2] - Batches of fixations (Batch size, Sequence length, 2 coordinates)
         lengths: [B] - Lengths of each fixation in the batch
         """
-
         lengths = mask.sum(dim=1).long() # Fixations lengths
-
         return self.encoder(batch, lengths)
 
     def generate_fixation(self, z0, length):
@@ -158,24 +154,6 @@ class LatentSDE(torchsde.SDEIto):
         decoded = self.decoder(zs)  # [length, 1, 2]
         return decoded.squeeze(1)  # [length, 2]
 
-    def forward(self, batch, mask):
-        """
-        batch: [B, T, 2] - Batches of fixations (Batch size, Sequence length, 2 coordinates)
-        lengths: [B] - Lengths of each fixation in the batch
-        """
-        ts = torch.linspace(0, 1, batch.size(1), device=self.device) # [T] - Time steps for the SDE
-
-        lengths = mask.sum(dim=1).long() # Fixations lengths
-        latent_states = self.encoder(batch, lengths) # [B, latent_size] - z0
-
-        zs = torchsde.sdeint(self, latent_states, ts) # [T, B, latent_size]
-        zs = zs.permute(1, 0, 2) # [B, T, latent_size]
-
-        recon_x = self.decoder(zs, lengths, ts) # [B, T, input_size]
-
-        return recon_x
-
-
 class EarlyStopping:
     def __init__(self, patience=30, delta=0):
         self.patience = patience
@@ -195,14 +173,9 @@ class EarlyStopping:
             self.best_loss = val_loss
             self.counter = 0
 
-
-# DataLoader
 from torch.utils.data import DataLoader, Dataset, Sampler
 from torch.nn.utils.rnn import pad_sequence
-from collections import defaultdict
-import torch
 import random
-
 
 class FixationDataset(Dataset):
     def __init__(self, sequences):
@@ -214,7 +187,6 @@ class FixationDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.sequences[idx]
-
 
 class BucketSampler(Sampler):
     def __init__(self, lengths, batch_size, bucket_size):
@@ -243,14 +215,12 @@ class BucketSampler(Sampler):
     def __len__(self):
         return len(self.buckets)
 
-
 def collate_fn(batch):
     lengths = [seq.shape[0] for seq in batch]
     max_len = max(lengths)
     padded = pad_sequence(batch, batch_first=True)
     mask = torch.arange(max_len)[None, :] < torch.tensor(lengths)[:, None]
     return padded, mask.float()
-
 
 def create_dataloaders(sbj_fixs, batch_size, bucket_size):
     random.shuffle(sbj_fixs)
@@ -272,215 +242,216 @@ def create_dataloaders(sbj_fixs, batch_size, bucket_size):
 
     return make_loader(train_set), make_loader(val_set), make_loader(test_set)
 
+if __name__ == "__main__":
+    import pickle
+    with open("../dataset/fixs.pkl", "rb") as f:
+        fixs = pickle.load(f) # n_sbj x n_img x n_fix x n_coord x 2
 
-# Parameters
-latent_size = 16 # Dimensionalità dello spazio latente
-input_size = 2 # Coppie di coordinate
-hidden_size = 64 # Dimensione dello stato nascosto
-batch_size = 128 # Dimensione del batch
+    # Parameters
+    input_size = 2
+    hidden_size = 64
+    latent_size = 16
+    batch_size = 32
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("Using device:", device)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print("Using device:", device)
+    num_epochs = 300
+    val_every = 1
+    log_every = 1000
+    lr = 1e-3
+    mse = nn.MSELoss()
 
-num_epochs = 300
-val_every = 1
-log_every = 1000
-lr = 1e-3
+    # Training
+    import random
+    import matplotlib.pyplot as plt
+    import tqdm
+    import os
 
-mse = nn.MSELoss()
+    os.makedirs("sdes", exist_ok=True)
+    os.makedirs("losses", exist_ok=True)
+    os.makedirs("train_loaders", exist_ok=True)
+    os.makedirs("val_loaders", exist_ok=True)
+    os.makedirs("test_loaders", exist_ok=True)
+    os.makedirs("reconstructions", exist_ok=True)
+    os.makedirs("reconstructions/test", exist_ok=True)
+    os.makedirs("reconstructions/train", exist_ok=True)
 
+    training = True # Set to False to skip training and only generate fixations
+    from_sbj = 0 # Starting subject index
+    n_sbj = 1 # Number of subjects to train on
 
-# Training
-import random
-import matplotlib.pyplot as plt
-import tqdm
-import os
+    subject_bar = tqdm.tqdm(range(n_sbj) if training else [], desc="Subjects", leave=True, position=0)
+    for i in subject_bar:
+        if i < from_sbj:
+            continue
 
-os.makedirs("sdes", exist_ok=True)
-os.makedirs("losses", exist_ok=True)
-os.makedirs("train_loaders", exist_ok=True)
-os.makedirs("val_loaders", exist_ok=True)
-os.makedirs("test_loaders", exist_ok=True)
-os.makedirs("reconstructions", exist_ok=True)
-os.makedirs("reconstructions/test", exist_ok=True)
-os.makedirs("reconstructions/train", exist_ok=True)
+        sbj_fixs = fixs[i]
 
-training = True # Set to False to skip training and only generate fixations
-from_sbj = 0 # Starting subject index
-n_sbj = 1 # Number of subjects to train on
+        sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
+        optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = "factor" every "patience" epochs without improvements
+        early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for "patience" epochs
 
-subject_bar = tqdm.tqdm(range(n_sbj) if training else [], desc="Subjects", leave=True, position=0)
-for i in subject_bar:
-    if i < from_sbj:
-        continue
+        train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
 
-    sbj_fixs = fixs[i]
+        with open(f"train_loaders/train_loader_{i}.pkl", "wb") as f:
+            pickle.dump(train_loader, f)
 
-    sde = LatentSDE(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size, device=device).to(device)
-    optimizer = optim.Adam(list(sde.parameters()), lr=lr, weight_decay=1e-3)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=20, factor=0.5) # lr * = "factor" every "patience" epochs without improvements
-    early_stopping = EarlyStopping(patience=30, delta=1e-3) # Stop training if validation loss does not improve for "patience" epochs
+        with open(f"val_loaders/val_loader_{i}.pkl", "wb") as f:
+            pickle.dump(val_loader, f)
 
-    train_loader, val_loader, test_loader = create_dataloaders(sbj_fixs, batch_size=batch_size, bucket_size=batch_size)
+        with open(f"test_loaders/test_loader_{i}.pkl", "wb") as f:
+            pickle.dump(test_loader, f)
 
-    with open(f"train_loaders/train_loader_{i}.pkl", "wb") as f:
-        pickle.dump(train_loader, f)
+        train_losses = []
+        val_losses = []
+        best_val_loss = float('inf')
+        best_epoch = 0
 
-    with open(f"val_loaders/val_loader_{i}.pkl", "wb") as f:
-        pickle.dump(val_loader, f)
+        sde.train()
 
-    with open(f"test_loaders/test_loader_{i}.pkl", "wb") as f:
-        pickle.dump(test_loader, f)
+        # Training loop
+        epoch_bar = tqdm.tqdm(range(num_epochs), desc="Epochs", leave=False, position=1)
+        for epoch in epoch_bar:
+            epoch_train_loss = 0.0
 
-    train_losses = []
-    val_losses = []
-    best_val_loss = float('inf')
-    best_epoch = 0
+            # Train step
+            train_bar = tqdm.tqdm(train_loader, desc="Batches", leave=False, position=2)
+            for batch, mask in train_bar:
+                #print(f"Processing batch of size {batch.shape}, lengths = {[int(mask[i].sum()) for i in range(mask.shape[0])]}")
 
-    sde.train()
+                batch = batch.to(device)
+                mask = mask.to(device)
 
-    epoch_bar = tqdm.tqdm(range(num_epochs), desc="Epochs", leave=False, position=1)
-    for epoch in epoch_bar:
+                recon_x = sde(batch, mask) # [B, T, latent_size]
 
-        # Training
-        epoch_train_loss = 0.0
-        train_bar = tqdm.tqdm(train_loader, desc="Batches", leave=False, position=2)
-        for batch, mask in train_bar:
-            #print(f"Processing batch of size {batch.shape}, lengths = {[int(mask[i].sum()) for i in range(mask.shape[0])]}")
+                mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
-            batch = batch.to(device)
-            mask = mask.to(device)
+                batch_loss = mse_loss
 
-            recon_x = sde(batch, mask) # [B, T, latent_size]
+                train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
-            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+                # Backpropagation
+                optimizer.zero_grad()
+                batch_loss.backward()
+                optimizer.step()
 
-            batch_loss = mse_loss
+                epoch_train_loss += batch_loss.item()
 
-            train_bar.set_postfix({"Batch Loss": batch_loss.item()})
+            epoch_train_loss /= len(train_loader)
+            train_losses.append(epoch_train_loss)
 
-            # Backpropagation
-            optimizer.zero_grad()
-            batch_loss.backward()
-            optimizer.step()
+            # Validation step
+            epoch_val_loss = float('inf')
+            if (epoch + 1) % val_every == 0:
+                epoch_val_loss = 0.0
+                sde.eval()
+                with torch.no_grad():
+                    val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
+                    for batch, mask in val_bar:
+                        batch = batch.to(device)
+                        mask = mask.to(device)
 
-            epoch_train_loss += batch_loss.item()
+                        recon_x = sde(batch, mask)  # [B, T, latent_size]
 
-        epoch_train_loss /= len(train_loader)
-        train_losses.append(epoch_train_loss)
+                        mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+                        
+                        batch_loss = mse_loss
 
-        # Validation
-        epoch_val_loss = float('inf')
-        if (epoch + 1) % val_every == 0:
-            epoch_val_loss = 0.0
-            sde.eval()
-            with torch.no_grad():
-                val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
-                for batch, mask in val_bar:
-                    batch = batch.to(device)
-                    mask = mask.to(device)
+                        val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
-                    recon_x = sde(batch, mask)  # [B, T, latent_size]
+                        epoch_val_loss += batch_loss.item()
 
-                    mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
-                    
-                    batch_loss = mse_loss
+                epoch_val_loss /= len(val_loader)
+                val_losses.append(epoch_val_loss)
+                sde.train()
 
-                    val_bar.set_postfix({"Batch Loss": batch_loss.item()})
+                scheduler.step(epoch_val_loss)
+                early_stopping(epoch_val_loss)
 
-                    epoch_val_loss += batch_loss.item()
+                if early_stopping.early_stop:
+                    tqdm.tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
+                    break
 
-            epoch_val_loss /= len(val_loader)
-            val_losses.append(epoch_val_loss)
-            sde.train()
+            epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss, "Learning Rate": scheduler.get_last_lr()})
 
-            scheduler.step(epoch_val_loss)
-            early_stopping(epoch_val_loss)
+            if (num_epochs + 1) % log_every == 0:
+                tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
 
-            if early_stopping.early_stop:
-                print(f"Early stopping triggered at epoch {epoch+1}")
-                break
+            # Saving the best model
+            if epoch_val_loss < best_val_loss:
+                best_val_loss = epoch_val_loss            
+                best_epoch = epoch
+                train_loss = epoch_train_loss
+                subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
+                torch.save({
+                    'sde': sde.state_dict(),
+                    'epoch': best_epoch,
+                    'val_loss': best_val_loss,
+                    'train_loss': train_loss
+                }, "sdes/best_sde_" + str(i) + ".pth")
 
-        epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss, "Learning Rate": scheduler.get_last_lr()})
+        plt.plot(train_losses, label='Training Loss')
+        plt.plot(val_losses, label='Validation Loss')
+        plt.savefig('losses/losses_' + str(i) + '.png')
+        plt.clf()
 
-        if (num_epochs + 1) % log_every == 0:
-            tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
+    # Testing
+    import matplotlib.pyplot as plt
+    import torch
+    import pickle
 
-        # Saving the best model
-        if epoch_val_loss < best_val_loss:
-            best_val_loss = epoch_val_loss            
-            best_epoch = epoch
-            train_loss = epoch_train_loss
-            subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
-            torch.save({
-                'sde': sde.state_dict(),
-                'epoch': best_epoch,
-                'val_loss': best_val_loss,
-                'train_loss': train_loss
-            }, "sdes/best_sde_" + str(i) + ".pth")
+    for i in range(n_sbj):
+        data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'), weights_only=True)
+        sde = LatentSDE(input_size, hidden_size, latent_size, device)
+        sde.load_state_dict(data['sde'])
+        sde.to(device)
+        sde.eval()
+        print(f"Loaded SDE for Subject {i} from epoch {data['epoch']} with validation loss {data['val_loss']:.4f}")
 
-    plt.plot(train_losses, label='Training Loss')
-    plt.plot(val_losses, label='Validation Loss')
-    plt.savefig('losses/losses_' + str(i) + '.png')
-    plt.clf()
+        test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
+        test_loss = 0.0
+        with torch.no_grad():
+            for batch, mask in test_loader:
+                batch = batch.to(device)
+                mask = mask.to(device)
 
+                recon_x = sde(batch, mask)
 
-# Testing
-import matplotlib.pyplot as plt
-import torch
-import pickle
+                mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
+                
+                batch_loss = mse_loss
 
-for i in range(n_sbj):
-    data = torch.load(f"sdes/best_sde_{i}.pth", map_location=torch.device('cpu'), weights_only=True)
-    sde = LatentSDE(input_size, hidden_size, latent_size, device)
-    sde.load_state_dict(data['sde'])
-    sde.to(device)
-    sde.eval()
-    print(f"Loaded SDE for Subject {i} from epoch {data['epoch']} with validation loss {data['val_loss']:.4f}")
+                test_loss += batch_loss.item()
 
-    test_loader = pickle.load(open(f"test_loaders/test_loader_{i}.pkl", "rb"))
-    test_loss = 0.0
-    with torch.no_grad():
-        for batch, mask in test_loader:
-            batch = batch.to(device)
-            mask = mask.to(device)
+                for j in range(batch.size(0)):
+                    plt.plot(batch[j, mask[j].bool(), 0].cpu().detach().numpy(), batch[j, mask[j].bool(), 1].cpu().detach().numpy(), color='blue', label='Original')
+                    plt.plot(recon_x[j, mask[j].bool(), 0].cpu().detach().numpy(), recon_x[j, mask[j].bool(), 1].cpu().detach().numpy(), color='red', label='Reconstructed')
+                    plt.title(f"Subject {i} - Image {j}")
+                    plt.xlabel("X Coordinate")
+                    plt.ylabel("Y Coordinate")
+                    plt.legend()
+                    plt.savefig(f"reconstructions/test/reconstruction_sbj_{i}_img_{j}.png")
+                    plt.clf()
 
-            recon_x = sde(batch, mask)
+            test_loss /= len(test_loader)
+        
+        print(f"Test Loss for Subject {i}: {test_loss:.4f}")
 
-            mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
-            
-            batch_loss = mse_loss
+        train_loader = pickle.load(open(f"train_loaders/train_loader_{i}.pkl", "rb"))
+        with torch.no_grad():
+            for batch, mask in train_loader:
+                batch = batch.to(device)
+                mask = mask.to(device)
 
-            test_loss += batch_loss.item()
+                recon_x = sde(batch, mask)
 
-            for j in range(batch.size(0)):
-                plt.plot(batch[j, mask[j].bool(), 0].cpu().detach().numpy(), batch[j, mask[j].bool(), 1].cpu().detach().numpy(), color='blue', label='Original')
-                plt.plot(recon_x[j, mask[j].bool(), 0].cpu().detach().numpy(), recon_x[j, mask[j].bool(), 1].cpu().detach().numpy(), color='red', label='Reconstructed')
-                plt.title(f"Subject {i} - Image {j}")
-                plt.xlabel("X Coordinate")
-                plt.ylabel("Y Coordinate")
-                plt.legend()
-                plt.savefig(f"reconstructions/test/reconstruction_sbj_{i}_img_{j}.png")
-                plt.clf()
-
-        test_loss /= len(test_loader)
-    
-    print(f"Test Loss for Subject {i}: {test_loss:.4f}")
-
-    train_loader = pickle.load(open(f"train_loaders/train_loader_{i}.pkl", "rb"))
-    with torch.no_grad():
-        for batch, mask in train_loader:
-            batch = batch.to(device)
-            mask = mask.to(device)
-
-            recon_x = sde(batch, mask)
-
-            for j in range(batch.size(0)):
-                plt.plot(batch[j, mask[j].bool(), 0].cpu().detach().numpy(), batch[j, mask[j].bool(), 1].cpu().detach().numpy(), color='blue', label='Original')
-                plt.plot(recon_x[j, mask[j].bool(), 0].cpu().detach().numpy(), recon_x[j, mask[j].bool(), 1].cpu().detach().numpy(), color='red', label='Reconstructed')
-                plt.title(f"Subject {i} - Image {j}")
-                plt.xlabel("X Coordinate")
-                plt.ylabel("Y Coordinate")
-                plt.legend()
-                plt.savefig(f"reconstructions/train/reconstruction_sbj_{i}_img_{j}.png")
-                plt.clf()
+                for j in range(batch.size(0)):
+                    plt.plot(batch[j, mask[j].bool(), 0].cpu().detach().numpy(), batch[j, mask[j].bool(), 1].cpu().detach().numpy(), color='blue', label='Original')
+                    plt.plot(recon_x[j, mask[j].bool(), 0].cpu().detach().numpy(), recon_x[j, mask[j].bool(), 1].cpu().detach().numpy(), color='red', label='Reconstructed')
+                    plt.title(f"Subject {i} - Image {j}")
+                    plt.xlabel("X Coordinate")
+                    plt.ylabel("Y Coordinate")
+                    plt.legend()
+                    plt.savefig(f"reconstructions/train/reconstruction_sbj_{i}_img_{j}.png")
+                    plt.clf()
