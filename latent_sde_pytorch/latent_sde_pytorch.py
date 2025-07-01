@@ -273,7 +273,7 @@ def create_dataloaders(sbj_fixs, batch_size):
 
 if __name__ == "__main__":
     # Parameters
-    batch_size=32
+    batch_size=64
     data_size=2
     latent_size=16
     context_size=64
