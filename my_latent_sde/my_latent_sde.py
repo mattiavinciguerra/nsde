@@ -249,15 +249,15 @@ if __name__ == "__main__":
 
     # Parameters
     input_size = 2
-    hidden_size = 64
-    latent_size = 16
-    batch_size = 32
+    hidden_size = 128 # TODO testing con questi parametri (già aumentati)
+    latent_size = 32
+    batch_size = 64
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Using device:", device)
 
     num_epochs = 300
     val_every = 1
-    log_every = 1000
+    log_every = 10
     lr = 1e-3
     mse = nn.MSELoss()
 
@@ -280,10 +280,11 @@ if __name__ == "__main__":
     from_sbj = 0 # Starting subject index
     n_sbj = 1 # Number of subjects to train on
 
-    subject_bar = tqdm.tqdm(range(n_sbj) if training else [], desc="Subjects", leave=True, position=0)
-    for i in subject_bar:
+    for i in range(n_sbj) if training else []:
         if i < from_sbj:
             continue
+
+        tqdm.tqdm.write(f"Training Subject {i}")
 
         sbj_fixs = fixs[i]
 
@@ -311,13 +312,12 @@ if __name__ == "__main__":
         sde.train()
 
         # Training loop
-        epoch_bar = tqdm.tqdm(range(num_epochs), desc="Epochs", leave=False, position=1)
+        epoch_bar = tqdm.tqdm(range(num_epochs), desc="Epochs")
         for epoch in epoch_bar:
             epoch_train_loss = 0.0
 
             # Train step
-            train_bar = tqdm.tqdm(train_loader, desc="Batches", leave=False, position=2)
-            for batch, mask in train_bar:
+            for batch, mask in train_loader:
                 #print(f"Processing batch of size {batch.shape}, lengths = {[int(mask[i].sum()) for i in range(mask.shape[0])]}")
 
                 batch = batch.to(device)
@@ -328,8 +328,6 @@ if __name__ == "__main__":
                 mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
 
                 batch_loss = mse_loss
-
-                train_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
                 # Backpropagation
                 optimizer.zero_grad()
@@ -347,8 +345,7 @@ if __name__ == "__main__":
                 epoch_val_loss = 0.0
                 sde.eval()
                 with torch.no_grad():
-                    val_bar = tqdm.tqdm(val_loader, desc="Batches", leave=False, position=2)
-                    for batch, mask in val_bar:
+                    for batch, mask in val_loader:
                         batch = batch.to(device)
                         mask = mask.to(device)
 
@@ -357,8 +354,6 @@ if __name__ == "__main__":
                         mse_loss = mse(recon_x * mask.unsqueeze(-1), batch * mask.unsqueeze(-1))
                         
                         batch_loss = mse_loss
-
-                        val_bar.set_postfix({"Batch Loss": batch_loss.item()})
 
                         epoch_val_loss += batch_loss.item()
 
@@ -373,17 +368,15 @@ if __name__ == "__main__":
                     tqdm.tqdm.write(f"Early stopping triggered at epoch {epoch+1}")
                     break
 
-            epoch_bar.set_postfix({"Epoch Train Loss": epoch_train_loss, "Epoch Val Loss": epoch_val_loss, "Learning Rate": scheduler.get_last_lr()})
-
             if (num_epochs + 1) % log_every == 0:
-                tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
+                tqdm.tqdm.write(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}, LR: {optimizer.param_groups[0]['lr']}")
 
             # Saving the best model
             if epoch_val_loss < best_val_loss:
                 best_val_loss = epoch_val_loss            
                 best_epoch = epoch
                 train_loss = epoch_train_loss
-                subject_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
+                epoch_bar.set_postfix({"Best Epoch": best_epoch, "Best Val Loss": best_val_loss})
                 torch.save({
                     'sde': sde.state_dict(),
                     'epoch': best_epoch,
