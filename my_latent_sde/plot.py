@@ -1,4 +1,4 @@
-from my_latent_sde import LatentSDE
+from my_latent_sde import LatentSDE, FixationDataset, BucketSampler, collate_fn
 
 # Testing
 import matplotlib.pyplot as plt

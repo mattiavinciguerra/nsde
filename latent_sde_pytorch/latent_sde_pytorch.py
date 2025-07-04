@@ -273,7 +273,7 @@ def create_dataloaders(sbj_fixs, batch_size):
 
 if __name__ == "__main__":
     # Parameters
-    batch_size=64
+    batch_size=32
     data_size=2
     latent_size=16
     context_size=64
@@ -390,7 +390,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(2, 4, figsize=(16, 6))  # 2 righe, 4 colonne
     axes = axes.flatten()  # Rende l'array bidimensionale in un array 1D per iterare facilmente
 
-    for i in range(8):
+    for i in range(1):
         print(f"Testing on subject {i}")
         checkpoint = torch.load('best_latent_sde_' + str(i) + '.pth')
         print(f"\tEpoch {checkpoint['epoch']} | Validation loss {checkpoint['val_loss']}")

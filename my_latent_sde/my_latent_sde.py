@@ -12,8 +12,8 @@ class Encoder(nn.Module):
         self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
 
@@ -39,8 +39,8 @@ class Decoder(nn.Module):
         self.gru = nn.GRU(input_size=latent_size + 1, hidden_size=hidden_size, batch_first=True)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, input_size)
         )
 
@@ -86,20 +86,20 @@ class LatentSDE(torchsde.SDEIto):
         self.decoder = Decoder(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size)
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.ReLU(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            #nn.Dropout(0.1),
+            nn.LeakyReLU(),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
         self.diffusion_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
             nn.Softplus(),
-            #nn.Dropout(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
             nn.Softplus(),
-            #nn.Dropout(0.1),
+            nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size),
             nn.Softplus()
         )
@@ -249,10 +249,11 @@ if __name__ == "__main__":
 
     # Parameters
     input_size = 2
-    hidden_size = 128 # TODO testing con questi parametri (già aumentati)
-    latent_size = 32
-    batch_size = 64
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    hidden_size = 64
+    latent_size = 16
+    batch_size = 32
+    #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     print("Using device:", device)
 
     num_epochs = 300
@@ -319,6 +320,7 @@ if __name__ == "__main__":
             # Train step
             for batch, mask in train_loader:
                 #print(f"Processing batch of size {batch.shape}, lengths = {[int(mask[i].sum()) for i in range(mask.shape[0])]}")
+                print(len(train_loader))
 
                 batch = batch.to(device)
                 mask = mask.to(device)
@@ -428,7 +430,7 @@ if __name__ == "__main__":
                     plt.clf()
 
             test_loss /= len(test_loader)
-        
+
         print(f"Test Loss for Subject {i}: {test_loss:.4f}")
 
         train_loader = pickle.load(open(f"train_loaders/train_loader_{i}.pkl", "rb"))
