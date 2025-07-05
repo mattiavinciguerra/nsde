@@ -12,7 +12,7 @@ class Encoder(nn.Module):
         self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
@@ -39,7 +39,7 @@ class Decoder(nn.Module):
         self.gru = nn.GRU(input_size=latent_size + 1, hidden_size=hidden_size, batch_first=True)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size, input_size)
         )
@@ -86,10 +86,10 @@ class LatentSDE(torchsde.SDEIto):
         self.decoder = Decoder(input_size=input_size, hidden_size=hidden_size, latent_size=latent_size)
         self.drift_net = nn.Sequential(
             nn.Linear(latent_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size, latent_size)
         )
