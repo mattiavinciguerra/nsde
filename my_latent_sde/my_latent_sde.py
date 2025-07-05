@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import PackedSequence, pad_packed_sequence
 
+# encoder
 class Encoder(nn.Module):
     def __init__(self, input_size, hidden_size, latent_size):
         super().__init__()
