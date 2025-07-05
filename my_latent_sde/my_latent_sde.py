@@ -39,7 +39,7 @@ class Decoder(nn.Module):
         self.gru = nn.GRU(input_size=latent_size + 1, hidden_size=hidden_size, batch_first=True)
         self.project = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(0.1),
+            nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size, input_size)
         )
